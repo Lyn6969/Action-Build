@@ -994,6 +994,29 @@ jobs:
           curl -LSs https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' ./security/Kconfig
 
+      - name: Fix KernelSU sucompat hook mismatch
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          EXEC_FILE="./fs/exec.c"
+          HOOK_NAME="ksu_handle_post_execveat_sucompat"
+          if ! grep -q "$HOOK_NAME" "$EXEC_FILE"; then
+            echo "未检测到 ${HOOK_NAME} 调用，跳过兼容处理"
+            exit 0
+          fi
+
+          if grep -Rqs --include='*.c' "$HOOK_NAME" ./drivers/kernelsu ./KernelSU 2>/dev/null; then
+            echo "${HOOK_NAME} 实现存在，无需处理"
+            exit 0
+          fi
+
+          if grep -Rqs --include='*.c' 'ksu_handle_execveat_sucompat' ./drivers/kernelsu ./KernelSU 2>/dev/null; then
+            echo "检测到可用替代符号 ksu_handle_execveat_sucompat，执行替换"
+            sed -i "s/\\b${HOOK_NAME}\\b/ksu_handle_execveat_sucompat/g" "$EXEC_FILE"
+          else
+            echo "未检测到可用替代符号，移除不兼容的 ${HOOK_NAME} 调用"
+            sed -i "/\\b${HOOK_NAME}[[:space:]]*(/d" "$EXEC_FILE"
+          fi
+
       # 配置信息，带*为附加项目，具有一定危险性和不确定性
       - name: Add Configuration Settings
         run: |
