@@ -804,6 +804,26 @@ jobs:
           kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" postfix "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
           kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" revert "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
 
+      # susfs 补丁自 2026-09-12 (d4ea3dd7) 起调用 ksu_handle_post_execveat_sucompat，
+      # 而 SukiSU-Ultra builtin 分支未实现该符号，导致 ld.lld undefined symbol。
+      # 此步骤在实现缺失时移除 fs/exec.c 中的调用，保留声明无害。
+      - name: Strip Missing SUSFS post-exec Hook
+        if: ${{ github.event.inputs.SUSFS_META != '-1' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          grep -q 'ksu_handle_post_execveat_sucompat' fs/exec.c || { echo "fs/exec.c 无 post-exec 钩子，跳过"; exit 0; }
+          if grep -Rqs --include='*.c' --include='*.h' 'ksu_handle_post_execveat_sucompat' ../KernelSU/kernel; then
+            echo "KernelSU 已实现 post-exec 钩子，跳过"
+            exit 0
+          fi
+          echo "::warning title=SUSFS post-exec hook::KernelSU 未实现 ksu_handle_post_execveat_sucompat，移除 fs/exec.c 中的调用"
+          sed -i 's/(void)ksu_handle_post_execveat_sucompat([^;]*);/(void)0;/' fs/exec.c
+          if grep -q 'ksu_handle_post_execveat_sucompat(&fd' fs/exec.c; then
+            echo "::error title=SUSFS post-exec hook::调用行格式与预期不符，无法自动移除，请检查 Strip Missing SUSFS post-exec Hook 步骤"
+            exit 1
+          fi
+          echo "已移除缺失实现的 post-exec 钩子调用"
+
       # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ (fromJSON(env.VERSIONLEVEL) > 6 || (fromJSON(env.VERSIONLEVEL) == 6 && fromJSON(env.PATCHLEVEL) >= 6)) && github.event.inputs.SCHED_HMBIRD == 'false' }}
